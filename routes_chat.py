@@ -1,6 +1,7 @@
 """POST /v1/chat/completions — 通过 ChatGPT Web 端实现 Chat Completions。"""
 
 import json
+import re
 import time
 import uuid
 from typing import Any
@@ -12,8 +13,11 @@ from config import settings
 from http_client import build_session
 from web_fingerprint import WebFingerprint
 from web_proof import build_legacy_requirements_token, build_proof_token
+from web_sse_parser import _CONVERSATION_ID_RE
 
 router = APIRouter()
+
+CONVERSATION_ID_PATTERN = r"^[0-9A-Za-z-]{1,64}$"
 
 
 @router.post("/v1/chat/completions")
@@ -26,6 +30,8 @@ async def chat_completions(request: Request):
     body: dict[str, Any] = await request.json()
     if "messages" not in body:
         return JSONResponse(status_code=400, content={"error": {"message": "messages is required"}})
+    if body.get("conversation_id") and not re.match(CONVERSATION_ID_PATTERN, str(body["conversation_id"])):
+        return JSONResponse(status_code=400, content={"error": {"message": "invalid conversation_id"}})
 
     model = body.get("model", settings.web_chat_model)
     stream = body.get("stream", False)
@@ -53,15 +59,16 @@ async def _complete_chat(token: str, model: str, body: dict[str, Any]) -> JSONRe
         # 获取 requirements
         reqs = await _get_requirements(session, fp, base, token)
 
-        # 准备对话
-        conduit = await _prepare_conversation(session, fp, base, token, model, reqs)
+        # 准备对话（带 conversation_id 时续写已有对话）
+        conversation_id, parent_id = await _continuation(session, fp, base, token, body.get("conversation_id"))
+        conduit = await _prepare_conversation(session, fp, base, token, model, reqs, conversation_id, parent_id)
 
         # 发起对话
         messages = body.get("messages", [])
         prompt = _messages_to_prompt(messages)
 
         path = "/backend-api/f/conversation"
-        conv_body = _build_conversation_body(model, prompt)
+        conv_body = _build_conversation_body(model, prompt, conversation_id, parent_id)
         headers = fp.image_headers(token, path, reqs["token"], reqs["proof_token"], reqs["so_token"], conduit=conduit, accept="text/event-stream")
 
         resp = await session.post(f"{base}{path}", json=conv_body, headers=headers)
@@ -70,6 +77,7 @@ async def _complete_chat(token: str, model: str, body: dict[str, Any]) -> JSONRe
 
         # 解析完整响应
         content = _parse_chat_response(resp.text)
+        conversation_id = _conversation_id(resp.text)
 
         # 粗略估算 token
         prompt_tokens = len(prompt) // 4 + 1
@@ -80,6 +88,7 @@ async def _complete_chat(token: str, model: str, body: dict[str, Any]) -> JSONRe
             "object": "chat.completion",
             "created": int(time.time()),
             "model": model,
+            **_conversation_fields(base, conversation_id),
             "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": prompt_tokens + completion_tokens},
         })
@@ -94,15 +103,16 @@ async def _stream_chat(token: str, model: str, body: dict[str, Any]):
         # 获取 requirements
         reqs = await _get_requirements(session, fp, base, token)
 
-        # 准备对话
-        conduit = await _prepare_conversation(session, fp, base, token, model, reqs)
+        # 准备对话（带 conversation_id 时续写已有对话）
+        conversation_id, parent_id = await _continuation(session, fp, base, token, body.get("conversation_id"))
+        conduit = await _prepare_conversation(session, fp, base, token, model, reqs, conversation_id, parent_id)
 
         # 发起对话
         messages = body.get("messages", [])
         prompt = _messages_to_prompt(messages)
 
         path = "/backend-api/f/conversation"
-        conv_body = _build_conversation_body(model, prompt)
+        conv_body = _build_conversation_body(model, prompt, conversation_id, parent_id)
         headers = fp.image_headers(token, path, reqs["token"], reqs["proof_token"], reqs["so_token"], conduit=conduit, accept="text/event-stream")
 
         resp = await session.post(f"{base}{path}", json=conv_body, headers=headers)
@@ -146,6 +156,7 @@ async def _stream_chat(token: str, model: str, body: dict[str, Any]):
             "object": "chat.completion.chunk",
             "created": int(time.time()),
             "model": model,
+            **_conversation_fields(base, _conversation_id(resp.text)),
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
         }
         yield f"data: {json.dumps(finish_chunk)}\n\n"
@@ -176,13 +187,42 @@ async def _get_requirements(session, fp: WebFingerprint, base: str, token: str) 
     return {"token": req_token, "proof_token": proof, "so_token": data.get("so_token", "")}
 
 
-async def _prepare_conversation(session, fp: WebFingerprint, base: str, token: str, model: str, reqs: dict[str, str]) -> str:
+async def _continuation(session, fp: WebFingerprint, base: str, token: str, conversation_id: str | None) -> tuple[str | None, str]:
+    """续写已有对话时，返回对话 id 和其最新消息 id（新一轮的 parent）。"""
+    if not conversation_id:
+        return None, "client-created-root"
+    path = f"/backend-api/conversation/{conversation_id}"
+    resp = await session.get(f"{base}{path}", headers=fp.base_headers(token, path))
+    if resp.status_code >= 400:
+        raise Exception(f"Conversation lookup failed: {resp.status_code}: {resp.text[:200]}")
+    return conversation_id, resp.json()["current_node"]
+
+
+def _conversation_ref(conversation_id: str | None, parent_id: str) -> dict[str, Any]:
+    ref: dict[str, Any] = {"parent_message_id": parent_id}
+    if conversation_id:
+        ref["conversation_id"] = conversation_id
+    return ref
+
+
+def _conversation_id(sse_text: str) -> str:
+    match = _CONVERSATION_ID_RE.search(sse_text)
+    return match.group(1) if match else ""
+
+
+def _conversation_fields(base: str, conversation_id: str) -> dict[str, str]:
+    """响应中附带的对话 id 和网页地址，可用于续写或在浏览器中打开。"""
+    return {"conversation_id": conversation_id, "conversation_url": f"{base}/c/{conversation_id}" if conversation_id else ""}
+
+
+async def _prepare_conversation(session, fp: WebFingerprint, base: str, token: str, model: str, reqs: dict[str, str],
+                                conversation_id: str | None = None, parent_id: str = "client-created-root") -> str:
     """准备对话获取 conduit token。"""
     path = "/backend-api/f/conversation/prepare"
     body = {
         "action": "next",
         "fork_from_shared_post": False,
-        "parent_message_id": "client-created-root",
+        **_conversation_ref(conversation_id, parent_id),
         "model": model,
         "client_prepare_state": "none",
         "timezone_offset_min": -480,
@@ -206,12 +246,13 @@ async def _prepare_conversation(session, fp: WebFingerprint, base: str, token: s
     return conduit
 
 
-def _build_conversation_body(model: str, prompt: str) -> dict[str, Any]:
+def _build_conversation_body(model: str, prompt: str, conversation_id: str | None = None,
+                             parent_id: str = "client-created-root") -> dict[str, Any]:
     """构造对话请求体。"""
     return {
         "action": "next",
         "fork_from_shared_post": False,
-        "parent_message_id": "client-created-root",
+        **_conversation_ref(conversation_id, parent_id),
         "model": model,
         "client_prepare_state": "success",
         "timezone_offset_min": -480,

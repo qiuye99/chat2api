@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import settings
 from routes_chat import router as chat_router
+from routes_conversations import router as conversations_router
 from routes_images import router as images_router
 from routes_images import IMAGES_DIR
 
@@ -47,6 +48,7 @@ async def health():
 
 # 路由
 app.include_router(chat_router)
+app.include_router(conversations_router)
 app.include_router(images_router)
 
 # 静态文件：提供生成的图片

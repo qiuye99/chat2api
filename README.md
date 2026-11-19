@@ -143,6 +143,26 @@ const resp = await client.chat.completions.create({
 console.log(resp.choices[0].message.content);
 ```
 
+## 💬 对话管理 / Conversations
+
+每次请求都会在 ChatGPT 账号中生成一条对话。非流式响应（以及流式响应的最后一个 chunk）附带 `conversation_id` 和 `conversation_url`（可在浏览器中打开）。请求体中带上 `conversation_id` 即可在该对话中继续提问，ChatGPT 会保留上下文，此时 `messages` 只需包含新消息：
+
+```bash
+curl http://localhost:8700/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","conversation_id":"<id>","messages":[{"role":"user","content":"继续"}]}'
+```
+
+| 接口 | 说明 |
+|------|------|
+| `GET /v1/conversations?limit=20&offset=0` | 按更新时间倒序列出对话（`archived=true` 列出已归档） |
+| `GET /v1/conversations?q=关键词&cursor=` | 使用 ChatGPT 自带搜索（标题和消息内容），用 `cursor` 翻页 |
+| `GET /v1/conversations/{id}` | 读取对话当前分支中可见的用户和助手消息 |
+| `PATCH /v1/conversations/{id}` | 归档 / 取消归档：`{"is_archived": true}` |
+| `DELETE /v1/conversations/{id}` | 删除对话（ChatGPT 不提供恢复） |
+
+Every request creates a chat in the ChatGPT account. The non-streamed response (and the last chunk of a streamed one) carries `conversation_id` and `conversation_url`, a link that opens the chat in the browser. Pass `conversation_id` in the request body to continue that chat: ChatGPT keeps the context, so `messages` only needs the new message. The `/v1/conversations` endpoints in the table above list (newest first), search (ChatGPT's own search over titles and message text, paged by `cursor`), read (the visible user and assistant messages of the current branch), archive or unarchive, and delete chats.
+
 ## 🧪 测试
 
 ```bash
@@ -172,6 +192,7 @@ python -B test_client.py image        # 图片生成
 ├── config.py            # 配置加载
 ├── http_client.py       # curl_cffi 客户端（Chrome TLS 指纹）
 ├── routes_chat.py       # /v1/chat/completions（流式 + 非流式）
+├── routes_conversations.py  # /v1/conversations（列出 / 搜索 / 读取 / 归档 / 删除）
 ├── routes_images.py     # /v1/images/generations（图片保存本地）
 ├── web_client.py        # Web 图片生成完整流程
 ├── web_fingerprint.py   # 浏览器指纹构造
