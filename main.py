@@ -20,6 +20,8 @@ from config import settings
 from routes_chat import router as chat_router
 from routes_images import router as images_router
 from routes_images import IMAGES_DIR
+from routes_session import router as session_router
+from web_session import AuthError, has_session
 
 app = FastAPI(
     title="GPT Proxy (Web Mode)",
@@ -42,12 +44,18 @@ app.add_middleware(
 @app.get("/v1/health")
 async def health():
     has_token = bool(settings.chatgpt_access_token.strip())
-    return JSONResponse(content={"ok": has_token, "mode": "web_cookie", "has_token": has_token})
+    return JSONResponse(content={"ok": has_token or has_session(), "mode": "web_cookie", "has_token": has_token, "has_session": has_session()})
+
+
+@app.exception_handler(AuthError)
+async def auth_error(request, exc: AuthError):
+    return exc.response()
 
 
 # 路由
 app.include_router(chat_router)
 app.include_router(images_router)
+app.include_router(session_router)
 
 # 静态文件：提供生成的图片
 app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")

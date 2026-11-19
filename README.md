@@ -58,7 +58,7 @@ PROXY_URL=http://127.0.0.1:7890
 2. 访问 [chatgpt.com/api/auth/session](https://chatgpt.com/api/auth/session)
 3. 复制 JSON 中的 `accessToken` 字段
 
-> Token 有效期约 10 天，过期后重新获取替换即可。
+> Token 有效期约 10 天，过期后重新获取替换即可。也可以同时填写 JSON 中的 `sessionToken`，见下方[自动续期](#-自动续期--automatic-token-renewal)。
 
 ### 4. 启动
 
@@ -143,6 +143,31 @@ const resp = await client.chat.completions.create({
 console.log(resp.choices[0].message.content);
 ```
 
+## 🔑 自动续期 / Automatic token renewal
+
+在 `.env` 中填写 `CHATGPT_SESSION_TOKEN`（[chatgpt.com/api/auth/session](https://chatgpt.com/api/auth/session) 返回 JSON 中的 `sessionToken`，即 `__Secure-next-auth.session-token` cookie）后：
+
+- chatgpt.com 返回 401 / `token_expired` 时，网关用 cookie 换取新的 Access Token 并自动重试一次，调用方无感知；
+- cookie 每次续期都会轮换，新值连同 Token 保存到 `SESSION_FILE`（默认 `session.json`，权限 600），启动时优先于 `.env`。手动更换 `.env` 中的凭据时请删除该文件；
+- cookie 也失效时（例如退出登录或很久未使用），接口返回 HTTP 401：`{"error": {"code": "session_expired", ...}}`。
+
+cookie 失效后无需登录服务器修改 `.env`：在服务器本机生成一次性刷新链接，在任意已登录 ChatGPT 的浏览器（包括手机）中打开，按页面提示粘贴 `chatgpt.com/api/auth/session` 的内容即可，无需重启：
+
+```bash
+curl -X POST http://127.0.0.1:8700/v1/session/link
+# {"url": "http://127.0.0.1:8700/chatgpt-session/<token>", "expires_at": "..."}
+```
+
+链接 30 分钟内有效，成功提交一次后失效；生成链接的接口只接受本机直连请求（带 `X-Forwarded-For` 等代理头的请求会被拒绝）。若通过反向代理对外提供刷新页面，请设置 `SESSION_REFRESH_BASE_URL`，并只转发 `/chatgpt-session/` 路径。
+
+Set `CHATGPT_SESSION_TOKEN` in `.env` (the `sessionToken` field of [chatgpt.com/api/auth/session](https://chatgpt.com/api/auth/session), which is the `__Secure-next-auth.session-token` cookie) and the gateway renews the access token by itself:
+
+- When chatgpt.com answers 401 / `token_expired`, the gateway mints a new access token from the cookie and retries the request once.
+- The cookie rotates on every renewal. The new cookie and token are saved to `SESSION_FILE` (default `session.json`, mode 600), which takes precedence over `.env` at startup. Delete it when you replace the credentials in `.env` by hand.
+- When the cookie is dead too (logged out, or unused for a long time), requests fail with HTTP 401 `{"error": {"code": "session_expired", ...}}`.
+
+To replace a dead session without editing `.env` or restarting, create a one-time link on the server (the `curl` above) and open it in any browser that is logged in to ChatGPT, including a phone. The page asks you to paste the content of `chatgpt.com/api/auth/session`, verifies it with chatgpt.com and switches to the new session. The link expires after 30 minutes and works once. Link creation only accepts direct requests from localhost and refuses requests carrying proxy headers such as `X-Forwarded-For`. If you publish the page through a reverse proxy, set `SESSION_REFRESH_BASE_URL` and forward only the `/chatgpt-session/` path.
+
 ## 🧪 测试
 
 ```bash
@@ -164,6 +189,9 @@ python -B test_client.py image        # 图片生成
 | `TIMEOUT` | 请求超时（秒） | `600` |
 | `WEB_IMAGE_MODEL` | 图片生成模型 | `gpt-5-5-thinking` |
 | `WEB_CHAT_MODEL` | 对话默认模型 | `gpt-4o` |
+| `CHATGPT_SESSION_TOKEN` | Session Token，用于自动续期（可选） | — |
+| `SESSION_FILE` | 续期后凭据的保存位置 | `session.json` |
+| `SESSION_REFRESH_BASE_URL` | 会话刷新页面的对外地址（可选） | 请求地址 |
 
 ## 📁 项目结构
 
@@ -173,6 +201,8 @@ python -B test_client.py image        # 图片生成
 ├── http_client.py       # curl_cffi 客户端（Chrome TLS 指纹）
 ├── routes_chat.py       # /v1/chat/completions（流式 + 非流式）
 ├── routes_images.py     # /v1/images/generations（图片保存本地）
+├── routes_session.py    # 一次性会话刷新页面
+├── web_session.py       # Access Token 自动续期
 ├── web_client.py        # Web 图片生成完整流程
 ├── web_fingerprint.py   # 浏览器指纹构造
 ├── web_proof.py         # Proof-of-Work 计算

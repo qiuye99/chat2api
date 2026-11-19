@@ -12,6 +12,7 @@ from config import settings
 from http_client import build_session
 from web_fingerprint import WebFingerprint
 from web_proof import build_legacy_requirements_token, build_proof_token
+from web_session import AuthError, call_with_renew, check_auth, has_session
 
 router = APIRouter()
 
@@ -19,8 +20,7 @@ router = APIRouter()
 @router.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     """通过 ChatGPT Web 端实现 OpenAI 兼容的 chat completions。"""
-    token = settings.chatgpt_access_token.strip()
-    if not token:
+    if not settings.chatgpt_access_token.strip() and not has_session():
         return JSONResponse(status_code=500, content={"error": {"message": "CHATGPT_ACCESS_TOKEN not configured"}})
 
     body: dict[str, Any] = await request.json()
@@ -32,12 +32,15 @@ async def chat_completions(request: Request):
 
     try:
         if stream:
+            first, chunks = await call_with_renew(lambda token: _start_stream(token, model, body))
             return StreamingResponse(
-                _stream_chat(token, model, body),
+                _resume_stream(first, chunks),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
             )
-        return await _complete_chat(token, model, body)
+        return await call_with_renew(lambda token: _complete_chat(token, model, body))
+    except AuthError:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -65,6 +68,7 @@ async def _complete_chat(token: str, model: str, body: dict[str, Any]) -> JSONRe
         headers = fp.image_headers(token, path, reqs["token"], reqs["proof_token"], reqs["so_token"], conduit=conduit, accept="text/event-stream")
 
         resp = await session.post(f"{base}{path}", json=conv_body, headers=headers)
+        check_auth(resp)
         if resp.status_code >= 400:
             return JSONResponse(status_code=resp.status_code, content={"error": {"message": f"upstream {resp.status_code}: {resp.text[:300]}"}})
 
@@ -106,6 +110,7 @@ async def _stream_chat(token: str, model: str, body: dict[str, Any]):
         headers = fp.image_headers(token, path, reqs["token"], reqs["proof_token"], reqs["so_token"], conduit=conduit, accept="text/event-stream")
 
         resp = await session.post(f"{base}{path}", json=conv_body, headers=headers)
+        check_auth(resp)
         if resp.status_code >= 400:
             error_chunk = json.dumps({"error": {"message": f"upstream {resp.status_code}: {resp.text[:300]}"}})
             yield f"data: {error_chunk}\n\n"
@@ -152,6 +157,18 @@ async def _stream_chat(token: str, model: str, body: dict[str, Any]):
         yield "data: [DONE]\n\n"
 
 
+async def _start_stream(token: str, model: str, body: dict[str, Any]):
+    """先取第一个 chunk：上游请求都在这之前完成，Token 过期时还能续期重试。"""
+    chunks = _stream_chat(token, model, body)
+    return await anext(chunks), chunks
+
+
+async def _resume_stream(first: str, chunks):
+    yield first
+    async for chunk in chunks:
+        yield chunk
+
+
 async def _get_requirements(session, fp: WebFingerprint, base: str, token: str) -> dict[str, str]:
     """获取 chat requirements。"""
     path = "/backend-api/sentinel/chat-requirements"
@@ -160,6 +177,7 @@ async def _get_requirements(session, fp: WebFingerprint, base: str, token: str) 
     headers["Content-Type"] = "application/json"
 
     resp = await session.post(f"{base}{path}", json=body, headers=headers)
+    check_auth(resp)
     if resp.status_code >= 400:
         raise Exception(f"Requirements failed: {resp.status_code}: {resp.text[:200]}")
 
@@ -196,6 +214,7 @@ async def _prepare_conversation(session, fp: WebFingerprint, base: str, token: s
     }
     headers = fp.image_headers(token, path, reqs["token"], reqs["proof_token"], reqs["so_token"], accept="*/*")
     resp = await session.post(f"{base}{path}", json=body, headers=headers)
+    check_auth(resp)
     if resp.status_code >= 400:
         raise Exception(f"Prepare failed: {resp.status_code}: {resp.text[:200]}")
 

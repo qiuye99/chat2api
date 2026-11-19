@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from config import settings
 from image_utils import SIZE_TABLE, resolve_image_size
 from web_client import WebImageClient
+from web_session import AuthError, call_with_renew, has_session
 
 router = APIRouter()
 
@@ -33,8 +34,7 @@ async def image_edits(request: Request):
 
 
 async def _create_image(body: dict[str, Any], edit: bool) -> JSONResponse:
-    token = settings.chatgpt_access_token.strip()
-    if not token:
+    if not settings.chatgpt_access_token.strip() and not has_session():
         return JSONResponse(status_code=500, content={"error": {"message": "CHATGPT_ACCESS_TOKEN not configured"}})
 
     prompt = body.get("prompt", "")
@@ -58,21 +58,24 @@ async def _create_image(body: dict[str, Any], edit: bool) -> JSONResponse:
     if not ratio:
         ratio = _ratio_from_size(size)
 
-    client = WebImageClient(
-        session_token=token,
-        base_url=settings.chatgpt_base_url,
-        proxy_url=settings.proxy_url,
-    )
+    def client(token: str) -> WebImageClient:
+        return WebImageClient(
+            session_token=token,
+            base_url=settings.chatgpt_base_url,
+            proxy_url=settings.proxy_url,
+        )
 
     try:
-        assets = await client.generate_image(
+        assets = await call_with_renew(lambda token: client(token).generate_image(
             prompt=prompt,
             size=size,
             ratio=ratio,
             n=n,
             ref_images=ref_images,
             web_model=web_model,
-        )
+        ))
+    except AuthError:
+        raise
     except Exception as e:
         return JSONResponse(status_code=502, content={"error": {"message": str(e)}})
 

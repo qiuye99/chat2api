@@ -16,6 +16,7 @@ from config import settings
 from http_client import build_session
 from web_fingerprint import WebFingerprint
 from web_proof import build_legacy_requirements_token, build_proof_token
+from web_session import check_auth
 from web_sse_parser import (
     extract_web_image_ids,
     extract_web_image_tool_ids,
@@ -85,6 +86,7 @@ class WebImageClient:
         headers["Content-Type"] = "application/json"
 
         resp = await session.post(f"{self.base_url}{path}", json=body, headers=headers)
+        check_auth(resp)
         if resp.status_code >= 400:
             raise Exception(f"Web requirements failed: {resp.status_code}: {resp.text[:320]}")
 
