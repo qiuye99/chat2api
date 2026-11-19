@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from config import settings
 from http_client import build_session
-from web_fingerprint import WebFingerprint
+from web_fingerprint import WebFingerprint, timezone_fields
 from web_proof import build_legacy_requirements_token, build_proof_token
 
 router = APIRouter()
@@ -185,8 +185,7 @@ async def _prepare_conversation(session, fp: WebFingerprint, base: str, token: s
         "parent_message_id": "client-created-root",
         "model": model,
         "client_prepare_state": "none",
-        "timezone_offset_min": -480,
-        "timezone": "Asia/Shanghai",
+        **timezone_fields(),
         "conversation_mode": {"kind": "primary_assistant"},
         "system_hints": [],
         "supports_buffering": True,
@@ -214,8 +213,7 @@ def _build_conversation_body(model: str, prompt: str) -> dict[str, Any]:
         "parent_message_id": "client-created-root",
         "model": model,
         "client_prepare_state": "success",
-        "timezone_offset_min": -480,
-        "timezone": "Asia/Shanghai",
+        **timezone_fields(),
         "conversation_mode": {"kind": "primary_assistant"},
         "enable_message_followups": True,
         "system_hints": [],

@@ -164,6 +164,14 @@ python -B test_client.py image        # 图片生成
 | `TIMEOUT` | 请求超时（秒） | `600` |
 | `WEB_IMAGE_MODEL` | 图片生成模型 | `gpt-5-5-thinking` |
 | `WEB_CHAT_MODEL` | 对话默认模型 | `gpt-4o` |
+| `CHATGPT_TIMEZONE` | 发给 ChatGPT 的时区（IANA 名称） | `Asia/Shanghai` |
+| `CHATGPT_LANGUAGE` | 发给 ChatGPT 的语言（`OAI-Language` / `Accept-Language`） | `zh-CN` |
+
+### 时区与语言 / Timezone and language
+
+默认按北京时间、简体中文访问 ChatGPT，与原行为一致。若部署在其他时区，或希望回复（包括思考过程）使用其他语言，可设置 `CHATGPT_TIMEZONE`（如 `Europe/Berlin`）和 `CHATGPT_LANGUAGE`（如 `en-US`）。
+
+By default the gateway presents itself to ChatGPT as Beijing time and Simplified Chinese, exactly as before. Set `CHATGPT_TIMEZONE` (for example `Europe/Berlin`) so that "today" in answers matches your location, and `CHATGPT_LANGUAGE` (for example `en-US`) so that replies and the visible reasoning summary are not in Chinese. An invalid timezone fails at startup.
 
 ## 📁 项目结构
 

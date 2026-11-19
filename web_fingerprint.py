@@ -1,6 +1,17 @@
 """浏览器指纹模拟，用于 Web Cookie 模式。"""
 
 import uuid
+from datetime import datetime
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from config import settings
+
+
+def timezone_fields() -> dict[str, Any]:
+    """对话请求中的时区字段（timezone_offset_min 为 UTC 与本地时间之差，单位分钟）。"""
+    offset = datetime.now(ZoneInfo(settings.chatgpt_timezone)).utcoffset()
+    return {"timezone_offset_min": -int(offset.total_seconds() // 60), "timezone": settings.chatgpt_timezone}
 
 
 class WebFingerprint:
@@ -17,6 +28,12 @@ class WebFingerprint:
         self.client_version = "prod-be885abbfcfe7b1f511e88b3003d9ee44757fbad"
         self.build_number = "5955942"
         self.sec_ch_ua = '"Microsoft Edge";v="143", "Chromium";v="143", "Not A(Brand";v="24"'
+        self.language = settings.chatgpt_language
+
+    def accept_language(self) -> str:
+        """由语言推导 Accept-Language，例如 zh-CN -> zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.7。"""
+        langs = list(dict.fromkeys([self.language, self.language.split("-")[0], "en", "en-US"]))
+        return ",".join([langs[0]] + [f"{lang};q={1 - i / 10:.1f}" for i, lang in enumerate(langs[1:], 1)])
 
     def base_headers(self, token: str = "", path: str = "") -> dict[str, str]:
         """构造基础 Web 请求头。"""
@@ -24,7 +41,7 @@ class WebFingerprint:
             "User-Agent": self.user_agent,
             "Origin": "https://chatgpt.com",
             "Referer": "https://chatgpt.com/",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.7",
+            "Accept-Language": self.accept_language(),
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
             "Priority": "u=1, i",
@@ -40,7 +57,7 @@ class WebFingerprint:
             "Sec-Fetch-Site": "same-origin",
             "OAI-Device-Id": self.device_id,
             "OAI-Session-Id": self.session_id,
-            "OAI-Language": "zh-CN",
+            "OAI-Language": self.language,
             "OAI-Client-Version": self.client_version,
             "OAI-Client-Build-Number": self.build_number,
             "X-OpenAI-Target-Path": path,

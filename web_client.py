@@ -14,7 +14,7 @@ from urllib.parse import quote, urlparse
 
 from config import settings
 from http_client import build_session
-from web_fingerprint import WebFingerprint
+from web_fingerprint import WebFingerprint, timezone_fields
 from web_proof import build_legacy_requirements_token, build_proof_token
 from web_sse_parser import (
     extract_web_image_ids,
@@ -115,8 +115,7 @@ class WebImageClient:
             "parent_message_id": "client-created-root",
             "model": model,
             "client_prepare_state": "none",
-            "timezone_offset_min": -480,
-            "timezone": "Asia/Shanghai",
+            **timezone_fields(),
             "conversation_mode": {"kind": "primary_assistant"},
             "system_hints": ["picture_v2"],
             "attachment_mime_types": ["image/png"],
@@ -150,8 +149,7 @@ class WebImageClient:
             "parent_message_id": "client-created-root",
             "model": model,
             "client_prepare_state": "success",
-            "timezone_offset_min": -480,
-            "timezone": "Asia/Shanghai",
+            **timezone_fields(),
             "conversation_mode": {"kind": "primary_assistant"},
             "enable_message_followups": True,
             "system_hints": [],
