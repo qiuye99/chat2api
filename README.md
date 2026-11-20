@@ -120,6 +120,11 @@ curl http://localhost:8700/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"stream":true}'
 
+# Work 模式（composer 中的 Chat / Work 开关）：可调用工具并发布可分享的 artifact
+curl http://localhost:8700/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"work","messages":[{"role":"user","content":"hello"}]}'
+
 # 生成图片
 curl http://localhost:8700/v1/images/generations \
   -H "Content-Type: application/json" \
@@ -164,6 +169,8 @@ python -B test_client.py image        # 图片生成
 | `TIMEOUT` | 请求超时（秒） | `600` |
 | `WEB_IMAGE_MODEL` | 图片生成模型 | `gpt-5-5-thinking` |
 | `WEB_CHAT_MODEL` | 对话默认模型 | `gpt-4o` |
+| `WEB_DEFAULT_MODE` | 新对话的模式：`chat` 或 `work`（ChatGPT 的 Work 模式） | `chat` |
+| `WEB_WORK_MODEL` | Work 模式默认模型，留空则使用账号的默认 Work 模型 | — |
 
 ## 📁 项目结构
 

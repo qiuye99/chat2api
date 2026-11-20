@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     web_image_model: str = "gpt-5-5-thinking"
     # Web 模式 chat 默认模型
     web_chat_model: str = "gpt-4o"
+    # 新对话的模式：chat（普通对话）或 work（ChatGPT 的 Work 模式），请求中可用 "mode" 单独指定
+    web_default_mode: str = "chat"
+    # Work 模式默认模型，留空则使用账号的默认 Work 模型
+    web_work_model: str = ""
 
     class Config:
         env_file = ".env"
